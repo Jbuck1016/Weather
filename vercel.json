@@ -1,0 +1,12 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "next build",
+  "devCommand": "next dev",
+  "installCommand": "npm install",
+  "crons": [
+    {
+      "path": "/api/bot/run",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}
