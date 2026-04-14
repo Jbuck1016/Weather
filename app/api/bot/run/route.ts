@@ -54,7 +54,13 @@ async function runCycle(req: Request) {
 
       if (decision.action === 'BUY') {
         const sizing = sizePaperTrade(edge, state)
+        if (!sizing || sizing.contracts <= 0 || sizing.cost <= 0) {
+          console.warn('[bot] sizing returned zero for', edge.ticker, JSON.stringify(sizing))
+          continue
+        }
+        console.log('[bot] attempting BUY:', edge.ticker, 'sizing:', JSON.stringify(sizing))
         const tradeId = await executePaperBuy(edge, sizing, state, cycleId)
+        console.log('[bot] executePaperBuy result:', tradeId ?? 'NULL — insert failed')
         if (tradeId) {
           decision.bot_trade_id = tradeId
           newTrades.push(tradeId)

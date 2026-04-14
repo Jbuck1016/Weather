@@ -335,7 +335,11 @@ export async function executePaperBuy(
   state: BotState,
   cycleId: string,
 ): Promise<string | null> {
-  if (sizing.contracts <= 0) return null
+  if (sizing.contracts <= 0) {
+    console.warn('[bot] executePaperBuy: sizing has zero contracts for', edge.ticker)
+    return null
+  }
+  try {
   const sb = getServerSupabase()
 
   const tradingFee = sizing.cost * 0.01
@@ -381,7 +385,11 @@ export async function executePaperBuy(
     .single()
 
   if (error) {
-    console.error('[bot] insert bot_trade failed:', error)
+    console.error('[bot] executePaperBuy insert error:', JSON.stringify(error), 'for', edge.ticker)
+    return null
+  }
+  if (!trade?.id) {
+    console.error('[bot] executePaperBuy: insert succeeded but no id returned for', edge.ticker)
     return null
   }
 
@@ -391,5 +399,9 @@ export async function executePaperBuy(
     total_trades: (state.total_trades ?? 0) + 1,
   })
 
-  return trade?.id ?? null
+  return trade.id
+  } catch (e: any) {
+    console.error('[bot] executePaperBuy exception:', e?.message ?? String(e), 'for', edge.ticker)
+    return null
+  }
 }
