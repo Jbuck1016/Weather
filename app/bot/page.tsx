@@ -44,9 +44,14 @@ interface BotTrade {
   contracts: number
   entry_price_cents: number
   cost: number
+  edge_pct_at_entry: number | null
+  paper_bankroll_before: number | null
+  close_time: string | null
   status: 'open' | 'closed' | 'settled'
   settlement_result: 'WIN' | 'LOSS' | null
   net_pnl: number | null
+  fees: number | null
+  gross_pnl: number | null
   created_at: string
   closed_at: string | null
   exit_price_cents: number | null
@@ -140,7 +145,10 @@ export default function BotPage() {
   const runNow = async () => {
     setRunning(true)
     try {
-      const res = await fetch('/api/bot/run', { method: 'POST' })
+      const res = await fetch('/api/bot/run', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer weatheredge-bot-secret-2026' },
+      })
       const j = await res.json()
       showToast(
         j.error
@@ -397,24 +405,50 @@ export default function BotPage() {
               <thead>
                 <tr>
                   <th>City</th>
+                  <th>Ticker</th>
                   <th>Side</th>
                   <th>Cont</th>
-                  <th>Entry</th>
+                  <th>Entry ¢</th>
                   <th>Cost</th>
+                  <th>Edge @ Entry</th>
+                  <th>Kelly %</th>
+                  <th>Hours Left</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {openTrades.map((t) => (
-                  <tr key={t.id}>
-                    <td className="font-bold">{t.city}</td>
-                    <td className={t.side === 'YES' ? 'text-green' : 'text-red'}>{t.side}</td>
-                    <td>{t.contracts}</td>
-                    <td>{t.entry_price_cents}¢</td>
-                    <td>${t.cost.toFixed(2)}</td>
-                  </tr>
-                ))}
+                {openTrades.map((t) => {
+                  const kellyPct = t.paper_bankroll_before && t.paper_bankroll_before > 0
+                    ? (t.cost / t.paper_bankroll_before) * 100
+                    : null
+                  const hoursLeft = t.close_time
+                    ? Math.max(0, (new Date(t.close_time).getTime() - Date.now()) / 3600000)
+                    : null
+                  return (
+                    <tr key={t.id}>
+                      <td className="font-bold">{t.city}</td>
+                      <td className="font-mono text-[10px] text-accent">{t.market_ticker}</td>
+                      <td className={t.side === 'YES' ? 'text-green font-bold' : 'text-strong font-bold'}>
+                        {t.side === 'YES' ? 'BUY YES' : 'BUY NO'}
+                      </td>
+                      <td>{t.contracts}</td>
+                      <td>{t.entry_price_cents}¢</td>
+                      <td>${t.cost.toFixed(2)}</td>
+                      <td className={t.edge_pct_at_entry !== null && t.edge_pct_at_entry > 0 ? 'text-green' : 'text-red'}>
+                        {t.edge_pct_at_entry !== null ? `${t.edge_pct_at_entry > 0 ? '+' : ''}${t.edge_pct_at_entry.toFixed(1)}%` : '—'}
+                      </td>
+                      <td className="text-soft">{kellyPct !== null ? `${kellyPct.toFixed(1)}%` : '—'}</td>
+                      <td className="text-soft">{hoursLeft !== null ? `${hoursLeft.toFixed(1)}h` : '—'}</td>
+                      <td>
+                        <span className="px-2 py-0.5 text-[10px] font-bold tracking-wider rounded-full bg-accent/20 text-accent border border-accent/40">
+                          OPEN
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })}
                 {openTrades.length === 0 && (
-                  <tr><td colSpan={5} className="text-center label py-6">No open positions</td></tr>
+                  <tr><td colSpan={10} className="text-center label py-6">No open positions — bot is watching</td></tr>
                 )}
               </tbody>
             </table>
@@ -499,9 +533,10 @@ function DecisionsTable({
             <th>City</th>
             <th>Range</th>
             <th>Action</th>
-            <th style={{ width: '40%' }}>Reason</th>
+            <th style={{ width: '30%' }}>Reason</th>
             <th>Edge%</th>
             <th>Fee EV%</th>
+            <th>Gates</th>
             <th>Spread</th>
             <th></th>
           </tr>
@@ -529,6 +564,16 @@ function DecisionsTable({
                   <td className={d.fee_ev_pct > 0 ? 'text-green' : 'text-red'}>
                     {d.fee_ev_pct > 0 ? '+' : ''}{d.fee_ev_pct.toFixed(0)}%
                   </td>
+                  <td>
+                    <div className="flex gap-1 text-[10px] font-mono">
+                      <GateDot ok={d.fee_ev_ok} title="Fee EV" />
+                      <GateDot ok={d.spread_ok} title="Spread" />
+                      <GateDot ok={d.volume_ok} title="Volume" />
+                      <GateDot ok={d.signal_strength_ok} title="Signal" />
+                      <GateDot ok={d.daily_limit_ok} title="Daily" />
+                      <GateDot ok={d.position_limit_ok} title="Position" />
+                    </div>
+                  </td>
                   <td className={d.inter_model_spread > 3 ? 'text-red' : 'text-soft'}>
                     ±{d.inter_model_spread.toFixed(1)}°
                   </td>
@@ -543,7 +588,7 @@ function DecisionsTable({
                 </tr>
                 {isOpen && (
                   <tr key={`${d.id}-exp`}>
-                    <td colSpan={9} className="bg-bg3 text-[11px]">
+                    <td colSpan={10} className="bg-bg3 text-[11px]">
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1 p-2">
                         <Check ok={d.fee_ev_ok}>Fee EV</Check>
                         <Check ok={d.spread_ok}>Spread</Check>
@@ -561,11 +606,22 @@ function DecisionsTable({
             )
           })}
           {decisions.length === 0 && (
-            <tr><td colSpan={9} className="text-center label py-8">No decisions logged yet</td></tr>
+            <tr><td colSpan={10} className="text-center label py-8">No decisions logged yet</td></tr>
           )}
         </tbody>
       </table>
     </div>
+  )
+}
+
+function GateDot({ ok, title }: { ok: boolean; title: string }) {
+  return (
+    <span
+      title={`${title}: ${ok ? 'pass' : 'fail'}`}
+      className={ok ? 'text-green' : 'text-red'}
+    >
+      {ok ? '✓' : '✗'}
+    </span>
   )
 }
 
@@ -578,6 +634,22 @@ function Check({ ok, children }: { ok: boolean; children: React.ReactNode }) {
 }
 
 function TradesTable({ trades }: { trades: BotTrade[] }) {
+  const settled = trades.filter((t) => t.status === 'settled')
+  const totals = settled.reduce(
+    (acc, t) => {
+      acc.gross += t.gross_pnl ?? 0
+      acc.fees += t.fees ?? 0
+      acc.net += t.net_pnl ?? 0
+      if (t.settlement_result === 'WIN') acc.wins++
+      if (t.settlement_result === 'LOSS') acc.losses++
+      return acc
+    },
+    { gross: 0, fees: 0, net: 0, wins: 0, losses: 0 },
+  )
+  const winRate = totals.wins + totals.losses > 0
+    ? (totals.wins / (totals.wins + totals.losses)) * 100
+    : 0
+
   return (
     <div className="overflow-x-auto scrollbar-thin max-h-[600px]">
       <table>
@@ -630,6 +702,17 @@ function TradesTable({ trades }: { trades: BotTrade[] }) {
           ))}
           {trades.length === 0 && (
             <tr><td colSpan={10} className="text-center label py-8">No trades yet</td></tr>
+          )}
+          {settled.length > 0 && (
+            <tr className="border-t-2 border-border bg-bg3 font-extrabold">
+              <td colSpan={6} className="text-right label">TOTALS ({settled.length} SETTLED · {winRate.toFixed(0)}% WIN)</td>
+              <td></td>
+              <td className="text-muted">fees ${totals.fees.toFixed(2)}</td>
+              <td className={totals.net >= 0 ? 'text-green' : 'text-red'}>
+                {totals.net >= 0 ? '+' : ''}${totals.net.toFixed(2)}
+              </td>
+              <td className="text-muted text-[11px]">gross {totals.gross >= 0 ? '+' : ''}${totals.gross.toFixed(2)}</td>
+            </tr>
           )}
         </tbody>
       </table>
