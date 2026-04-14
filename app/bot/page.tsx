@@ -6,6 +6,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, ReferenceLine,
 } from 'recharts'
+import { americanOdds } from '@/lib/edge'
 
 interface BotState {
   enabled: boolean
@@ -202,7 +203,11 @@ export default function BotPage() {
   const losses = settledTrades.filter((t) => t.settlement_result === 'LOSS').length
   const winRate = wins + losses > 0 ? (wins / (wins + losses)) * 100 : 0
   const openTrades = useMemo(() => trades.filter((t) => t.status === 'open'), [trades])
-  const totalPnl = state ? state.paper_bankroll - (state.initial_bankroll ?? 500) : 0
+  const deployed = useMemo(
+    () => openTrades.reduce((s, t) => s + (t.cost ?? 0), 0),
+    [openTrades],
+  )
+  const totalPnl = settledTrades.reduce((s, t) => s + (t.net_pnl ?? 0), 0)
   const pnlPct = state && state.initial_bankroll
     ? (totalPnl / state.initial_bankroll) * 100
     : 0
@@ -295,10 +300,16 @@ export default function BotPage() {
               color={state.paper_bankroll >= (state.initial_bankroll ?? 500) ? 'text-green' : 'text-red'}
             />
             <Metric
-              label="Total P&L"
+              label="Deployed"
+              value={`$${deployed.toFixed(2)}`}
+              sub={`${openTrades.length} open`}
+              color="text-accent"
+            />
+            <Metric
+              label="Settled P&L"
               value={`${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`}
-              sub={`${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`}
-              color={totalPnl >= 0 ? 'text-green' : 'text-red'}
+              sub={settledTrades.length > 0 ? `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%` : 'no settled'}
+              color={settledTrades.length === 0 ? 'text-muted' : totalPnl >= 0 ? 'text-green' : 'text-red'}
             />
             <Metric
               label="Win Rate"
@@ -315,7 +326,7 @@ export default function BotPage() {
             />
             <Metric
               label="Total Trades"
-              value={`${state.total_trades ?? 0}`}
+              value={`${trades.length}`}
             />
           </div>
 
@@ -417,6 +428,8 @@ export default function BotPage() {
                   <th>Side</th>
                   <th>Cont</th>
                   <th>Entry ¢</th>
+                  <th>Odds</th>
+                  <th>Payout</th>
                   <th>Cost</th>
                   <th>Edge @ Entry</th>
                   <th>Kelly %</th>
@@ -441,6 +454,10 @@ export default function BotPage() {
                       </td>
                       <td>{t.contracts}</td>
                       <td>{t.entry_price_cents}¢</td>
+                      <td className="font-mono text-soft">{americanOdds(t.entry_price_cents)}</td>
+                      <td className="text-green font-bold">
+                        +${((t.contracts * (100 - t.entry_price_cents)) / 100).toFixed(2)}
+                      </td>
                       <td>${t.cost.toFixed(2)}</td>
                       <td className={t.edge_pct_at_entry !== null && t.edge_pct_at_entry > 0 ? 'text-green' : 'text-red'}>
                         {t.edge_pct_at_entry !== null ? `${t.edge_pct_at_entry > 0 ? '+' : ''}${t.edge_pct_at_entry.toFixed(1)}%` : '—'}
@@ -456,7 +473,7 @@ export default function BotPage() {
                   )
                 })}
                 {openTrades.length === 0 && (
-                  <tr><td colSpan={10} className="text-center label py-6">No open positions — bot is watching</td></tr>
+                  <tr><td colSpan={12} className="text-center label py-6">No open positions — bot is watching</td></tr>
                 )}
               </tbody>
             </table>

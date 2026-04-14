@@ -8,7 +8,9 @@
       "Bash(curl -s \"https://weather-h6m57fs0o-jbuck1016s-projects.vercel.app/api/edges?bankroll=750\")",
       "Bash(python -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\('edges:',len\\(d.get\\('edges',[]\\)\\),'tomorrow:',d.get\\('tomorrow'\\),'updatedAt:',d.get\\('updatedAt'\\)\\);print\\('dayLabels:',sorted\\(set\\(e['dayLabel'] for e in d.get\\('edges',[]\\)\\)\\)\\)\")",
       "Bash(python -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\('edges:',len\\(d.get\\('edges',[]\\)\\),'tomorrow:',d.get\\('tomorrow'\\)\\);print\\('dayLabels:',sorted\\(set\\(e['dayLabel'] for e in d.get\\('edges',[]\\)\\)\\)\\)\")",
-      "Bash(python -c \"import json,sys;d=json.load\\(sys.stdin\\);es=d.get\\('edges',[]\\);print\\('edges:',len\\(es\\)\\);from collections import Counter;print\\('by dayLabel:',Counter\\(e['dayLabel'] for e in es\\)\\);print\\('by source:',Counter\\(e['forecastSource'] for e in es\\)\\);print\\('max edge:',max\\(\\(e['edgePct'] for e in es\\),default=0\\)\\)\")"
+      "Bash(python -c \"import json,sys;d=json.load\\(sys.stdin\\);es=d.get\\('edges',[]\\);print\\('edges:',len\\(es\\)\\);from collections import Counter;print\\('by dayLabel:',Counter\\(e['dayLabel'] for e in es\\)\\);print\\('by source:',Counter\\(e['forecastSource'] for e in es\\)\\);print\\('max edge:',max\\(\\(e['edgePct'] for e in es\\),default=0\\)\\)\")",
+      "Bash(curl -s -X POST \"https://weather-1txyo5gin-jbuck1016s-projects.vercel.app/api/bot/run\" -H \"Authorization: Bearer weatheredge-bot-secret-2026\")",
+      "Bash(kill 9859 9868)"
     ]
   }
 }
