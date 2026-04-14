@@ -6,6 +6,7 @@ import {
   updateBotState, type BotTrade,
 } from '@/lib/bot'
 import { getServerSupabase } from '@/lib/supabase'
+import { sendWeeklyDigest } from '@/lib/twilio'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -44,30 +45,44 @@ async function runCycle(req: Request) {
 
     const freshOpen: BotTrade[] = await getOpenPositions()
 
-    // Snapshot open positions — record edge decay over time
-    const snapshotRows = []
+    // Snapshot open positions — record edge decay over time.
+    // Look up latest edge_signals row per position rather than relying on
+    // the current /api/edges result (which filters PAST markets and may drop
+    // tickers the bot already holds).
+    const snapshotRows: any[] = []
     for (const pos of freshOpen) {
-      const matchingEdge = edges.find((e: any) => e.ticker === pos.market_ticker)
-      if (!matchingEdge) continue
+      const { data: latestSignal } = await sb
+        .from('edge_signals')
+        .select('*')
+        .eq('market_ticker', pos.market_ticker)
+        .order('captured_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (!latestSignal) {
+        console.warn('[bot] no edge_signal found for open position:', pos.market_ticker)
+        continue
+      }
+
       const hoursSinceEntry = pos.created_at
-        ? (Date.now() - new Date(pos.created_at).getTime()) / 3600000
+        ? Math.round((Date.now() - new Date(pos.created_at).getTime()) / 360000) / 10
         : null
+
       snapshotRows.push({
         bot_trade_id: pos.id,
         market_ticker: pos.market_ticker,
         city: pos.city,
-        hours_since_entry: hoursSinceEntry !== null ? Math.round(hoursSinceEntry * 10) / 10 : null,
-        hours_to_close: matchingEdge.hoursToClose
-          ? Math.round(matchingEdge.hoursToClose * 10) / 10 : null,
-        yes_bid_cents: matchingEdge.yesBid,
-        yes_ask_cents: matchingEdge.yesAsk,
-        kalshi_prob: matchingEdge.kalshiProb,
-        nws_prob: matchingEdge.nwsProb,
-        edge_pct: matchingEdge.edgePct,
-        fee_adjusted_ev_pct: matchingEdge.feeAdjustedEvPct,
-        inter_model_spread: matchingEdge.interModelSpread,
-        forecast_temp: matchingEdge.forecastTemp,
-        volume: matchingEdge.volume ?? 0,
+        hours_since_entry: hoursSinceEntry,
+        hours_to_close: null,
+        yes_bid_cents: latestSignal.yes_bid_cents,
+        yes_ask_cents: latestSignal.yes_ask_cents,
+        kalshi_prob: latestSignal.kalshi_prob,
+        nws_prob: latestSignal.nws_prob,
+        edge_pct: latestSignal.edge_pct,
+        fee_adjusted_ev_pct: latestSignal.fee_adjusted_ev_pct,
+        inter_model_spread: latestSignal.std_dev_used,
+        forecast_temp: latestSignal.forecast_temp,
+        volume: latestSignal.volume ?? 0,
       })
     }
     if (snapshotRows.length > 0) {
@@ -135,6 +150,47 @@ async function runCycle(req: Request) {
       last_run_signals_evaluated: edges.length,
       last_run_trades_placed: newTrades.length,
     })
+
+    // Weekly WhatsApp digest — Sundays at 9am Pacific
+    const nowPacific = new Date(
+      new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }),
+    )
+    if (nowPacific.getDay() === 0 && nowPacific.getHours() === 9) {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()
+      const { data: weekTrades } = await sb
+        .from('trade_analysis')
+        .select('*')
+        .gte('created_at', sevenDaysAgo)
+
+      if (weekTrades && weekTrades.length > 0) {
+        const wins = weekTrades.filter((t) => t.settlement_result === 'WIN').length
+        const losses = weekTrades.filter((t) => t.settlement_result === 'LOSS').length
+        const netPnl = weekTrades.reduce((s, t) => s + (t.net_pnl ?? 0), 0)
+        const avgEdge =
+          weekTrades.reduce((s, t) => s + Math.abs(t.edge_at_entry ?? 0), 0) / weekTrades.length
+        const avgErr =
+          weekTrades.reduce((s, t) => s + (t.forecast_error_f ?? 0), 0) / weekTrades.length
+
+        const cityPnl: Record<string, number> = {}
+        weekTrades.forEach((t) => {
+          cityPnl[t.city] = (cityPnl[t.city] ?? 0) + (t.net_pnl ?? 0)
+        })
+        const cities = Object.entries(cityPnl).sort((a, b) => b[1] - a[1])
+
+        void sendWeeklyDigest({
+          tradesPlaced: weekTrades.length,
+          wins,
+          losses,
+          winRate: weekTrades.length > 0 ? wins / weekTrades.length : 0,
+          avgEdgeAtEntry: avgEdge,
+          avgForecastError: avgErr,
+          netPnl,
+          bestCity: cities[0]?.[0] ?? '—',
+          worstCity: cities[cities.length - 1]?.[0] ?? '—',
+          bankroll: currentState.paper_bankroll,
+        })
+      }
+    }
 
     return NextResponse.json({
       cycleId,

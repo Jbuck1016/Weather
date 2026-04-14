@@ -276,6 +276,7 @@ export async function checkExits(
       const remainingContracts = pos.contracts - contractsToSell
       const stillOpen = isProfitTake && remainingContracts > 0
 
+      const finalNetPnl = ((pos as any).net_pnl ?? 0) + netPnl
       await sb
         .from('bot_trades')
         .update({
@@ -286,7 +287,9 @@ export async function checkExits(
           exit_proceeds: Math.round(proceeds * 100) / 100,
           closed_at: stillOpen ? null : new Date().toISOString(),
           contracts: stillOpen ? remainingContracts : pos.contracts,
-          net_pnl: ((pos as any).net_pnl ?? 0) + netPnl,
+          net_pnl: finalNetPnl,
+          gross_pnl: proceeds - pos.cost,
+          settlement_result: stillOpen ? null : (finalNetPnl >= 0 ? 'WIN' : 'LOSS'),
           trading_fee: ((pos as any).trading_fee ?? 0) + tradingFee,
           settlement_fee: ((pos as any).settlement_fee ?? 0) + settlementFee,
         })
@@ -298,6 +301,18 @@ export async function checkExits(
         peak_bankroll: Math.max(state.peak_bankroll ?? newBankroll, newBankroll),
       })
       state.paper_bankroll = newBankroll
+
+      if (!stillOpen) {
+        const settledTrade = {
+          ...pos,
+          status: 'closed' as const,
+          net_pnl: finalNetPnl,
+          gross_pnl: proceeds - pos.cost,
+          settlement_result: finalNetPnl >= 0 ? 'WIN' : 'LOSS',
+          closed_at: new Date().toISOString(),
+        }
+        void writeTradeAnalysis(settledTrade as any, null)
+      }
     }
 
     decisions.push({
@@ -403,5 +418,107 @@ export async function executePaperBuy(
   } catch (e: any) {
     console.error('[bot] executePaperBuy exception:', e?.message ?? String(e), 'for', edge.ticker)
     return null
+  }
+}
+
+export async function writeTradeAnalysis(
+  trade: BotTrade & {
+    closed_at?: string | null
+    gross_pnl?: number | null
+    settlement_result?: string | null
+    model_consensus_temp?: number | null
+    model_count?: number | null
+    top_models?: string[] | null
+    forecast_source?: string | null
+  },
+  actualHigh: number | null,
+): Promise<void> {
+  try {
+    const sb = getServerSupabase()
+
+    const { data: snapshots } = await sb
+      .from('position_snapshots')
+      .select('edge_pct, captured_at')
+      .eq('bot_trade_id', trade.id)
+      .order('captured_at', { ascending: false })
+      .limit(1)
+
+    const edgeAtClose = snapshots?.[0]?.edge_pct ?? null
+
+    const entryDate = new Date(trade.created_at)
+    const pacificHour = parseInt(
+      entryDate.toLocaleString('en-US', {
+        timeZone: 'America/Los_Angeles',
+        hour: 'numeric',
+        hour12: false,
+      }),
+    )
+    const entrySession =
+      pacificHour < 11 ? 'morning' : pacificHour < 17 ? 'afternoon' : 'evening'
+
+    const hoursHeld = trade.closed_at
+      ? (new Date(trade.closed_at).getTime() - entryDate.getTime()) / 3600000
+      : null
+
+    const forecastTempAtEntry = trade.model_consensus_temp ?? null
+    const forecastError =
+      actualHigh != null && forecastTempAtEntry != null
+        ? actualHigh - forecastTempAtEntry
+        : null
+
+    const roi =
+      trade.net_pnl != null && trade.cost > 0
+        ? (trade.net_pnl / trade.cost) * 100
+        : null
+
+    const edgeCompression =
+      trade.edge_pct_at_entry != null && edgeAtClose != null
+        ? Math.round(
+            (Math.abs(trade.edge_pct_at_entry) - Math.abs(edgeAtClose)) * 10,
+          ) / 10
+        : null
+
+    const { error } = await sb.from('trade_analysis').upsert(
+      {
+        bot_trade_id: trade.id,
+        market_ticker: trade.market_ticker,
+        city: trade.city,
+        market_date: trade.market_date,
+        market_type: trade.market_type,
+        edge_at_entry: trade.edge_pct_at_entry,
+        kalshi_prob_at_entry: trade.kalshi_prob_at_entry,
+        model_prob_at_entry: trade.model_prob_at_entry,
+        inter_model_spread_at_entry: trade.inter_model_spread,
+        entry_price_cents: trade.entry_price_cents,
+        entry_hour_pacific: pacificHour,
+        entry_session: entrySession,
+        hours_held: hoursHeld ? Math.round(hoursHeld * 10) / 10 : null,
+        forecast_temp_at_entry: forecastTempAtEntry,
+        actual_high: actualHigh,
+        forecast_error_f: forecastError !== null ? Math.round(forecastError * 10) / 10 : null,
+        forecast_abs_error_f:
+          forecastError !== null ? Math.round(Math.abs(forecastError) * 10) / 10 : null,
+        edge_at_close: edgeAtClose,
+        edge_compression: edgeCompression,
+        settlement_result: trade.settlement_result ?? null,
+        gross_pnl: trade.gross_pnl ?? null,
+        net_pnl: trade.net_pnl,
+        roi_pct: roi !== null ? Math.round(roi * 10) / 10 : null,
+        top_models: trade.top_models ?? [],
+        model_count: trade.model_count ?? null,
+        forecast_source: trade.forecast_source ?? null,
+      },
+      { onConflict: 'bot_trade_id' },
+    )
+
+    if (error) {
+      console.error('[bot] writeTradeAnalysis insert error:', error.message)
+      return
+    }
+    console.log(
+      `[bot] trade analysis written for ${trade.market_ticker} — ${trade.settlement_result ?? 'closed'}`,
+    )
+  } catch (e: any) {
+    console.error('[bot] writeTradeAnalysis failed:', e?.message ?? String(e))
   }
 }
