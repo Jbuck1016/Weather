@@ -117,18 +117,26 @@ export default function BotPage() {
   const [saving, setSaving] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
   const load = useCallback(async () => {
-    const [s, t, d, e] = await Promise.all([
-      fetch('/api/bot/state').then((r) => r.json()),
-      fetch('/api/bot/trades?limit=200').then((r) => r.json()),
-      fetch('/api/bot/decisions?limit=200').then((r) => r.json()),
-      fetch('/api/bot/equity?days=7').then((r) => r.json()),
-    ])
-    if (s.state) setState(s.state)
-    setTrades(t.trades ?? [])
-    setDecisions(d.decisions ?? [])
-    setEquity(e.snapshots ?? [])
+    setRefreshing(true)
+    try {
+      const [s, t, d, e] = await Promise.all([
+        fetch('/api/bot/state', { cache: 'no-store' }).then((r) => r.json()),
+        fetch('/api/bot/trades?limit=200', { cache: 'no-store' }).then((r) => r.json()),
+        fetch('/api/bot/decisions?limit=200', { cache: 'no-store' }).then((r) => r.json()),
+        fetch('/api/bot/equity?days=7', { cache: 'no-store' }).then((r) => r.json()),
+      ])
+      if (s.state) setState(s.state)
+      setTrades(t.trades ?? [])
+      setDecisions(d.decisions ?? [])
+      setEquity(e.snapshots ?? [])
+      setLastUpdated(new Date())
+    } finally {
+      setRefreshing(false)
+    }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -473,7 +481,19 @@ export default function BotPage() {
               {t === 'all' ? 'ALL DECISIONS' : t === 'trades' ? 'TRADES' : 'SKIPPED'}
             </button>
           ))}
-          <span className="ml-auto p-2 label">{filteredDecisions.length} ROWS</span>
+          <div className="ml-auto flex items-center gap-3 p-2">
+            <span className="label">{filteredDecisions.length} ROWS</span>
+            <span className="label text-muted">
+              LAST UPDATED {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}
+            </span>
+            <button
+              onClick={load}
+              disabled={refreshing}
+              className="px-2.5 py-1 border border-accent/50 text-accent text-[10px] font-bold tracking-wider hover:bg-accent/15 rounded disabled:opacity-50"
+            >
+              {refreshing ? 'REFRESHING…' : 'REFRESH'}
+            </button>
+          </div>
         </div>
         {tab === 'trades' ? (
           <TradesTable trades={trades} />
