@@ -56,8 +56,10 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
+function getTodayPacific(): Date {
+  const now = new Date()
+  const pacific = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }))
+  return new Date(pacific.getFullYear(), pacific.getMonth(), pacific.getDate())
 }
 
 export async function GET(req: Request) {
@@ -65,7 +67,7 @@ export async function GET(req: Request) {
   const bankroll = parseFloat(searchParams.get('bankroll') || '750')
 
   const seriesList = Object.keys(CITIES)
-  const today = startOfDay(new Date())
+  const today = getTodayPacific()
   const tomorrow = new Date(today)
   tomorrow.setDate(tomorrow.getDate() + 1)
   const todayStr = today.toISOString().slice(0, 10)
