@@ -4,7 +4,7 @@ export function EdgeBadge({ label }: { label: 'STRONG' | 'MODERATE' | 'WEAK' }) 
   const colors = {
     STRONG: 'bg-strong text-bg',
     MODERATE: 'bg-yellow text-bg',
-    WEAK: 'bg-accent/20 text-accent border border-accent/40',
+    WEAK: 'bg-transparent text-muted border border-muted/40',
   }
   return (
     <span

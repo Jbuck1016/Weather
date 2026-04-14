@@ -69,14 +69,15 @@ export default function Dashboard() {
   }, [data, selectedCity])
 
   const stats = useMemo(() => {
-    if (!data) return { scanned: 0, found: 0, strongest: 0, avg: 0 }
-    const scanned = data.cityStatus.length
+    if (!data) return { cities: 0, scanned: 0, found: 0, strongest: 0, avg: 0 }
+    const cities = data.cityStatus.length
+    const scanned = data.edges.length
     const found = data.edges.length
     const strongest = data.edges[0]?.edgePct ?? 0
     const avg = found > 0
       ? data.edges.reduce((a, e) => a + Math.abs(e.edgePct), 0) / found
       : 0
-    return { scanned, found, strongest, avg: Math.round(avg * 10) / 10 }
+    return { cities, scanned, found, strongest, avg: Math.round(avg * 10) / 10 }
   }, [data])
 
   const applyBankroll = () => {
@@ -147,7 +148,8 @@ export default function Dashboard() {
         onToggleHideFeeNegative={setHideFeeNegative}
       />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-bg2 border border-border p-3 text-xs">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 bg-bg2 border border-border p-3 text-xs">
+        <Stat label="Cities Scanned" value={stats.cities.toString()} />
         <Stat label="Markets Scanned" value={stats.scanned.toString()} />
         <Stat label="Edges Found" value={stats.found.toString()} />
         <Stat

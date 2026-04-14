@@ -18,7 +18,7 @@ const syne = Syne({
 })
 
 export const metadata: Metadata = {
-  title: 'WeatherEdge',
+  title: 'WeatherEdge — KX Weather Trading',
   description: 'Kalshi weather market trading dashboard',
 }
 

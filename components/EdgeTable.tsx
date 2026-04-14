@@ -146,7 +146,7 @@ export function EdgeTable({ edges, onLog, hideFeeNegative, onToggleHideFeeNegati
                     className={clsx(
                       'inline-block px-2.5 py-1 text-[10px] font-bold tracking-wider rounded-full',
                       e.dayLabel === 'TODAY' && 'bg-strong text-bg',
-                      e.dayLabel === 'TOMORROW' && 'bg-accent text-bg',
+                      e.dayLabel === 'TOMORROW' && 'bg-accent/15 text-accent border border-accent/40',
                       e.dayLabel === 'FUTURE' && 'bg-muted/30 text-muted border border-muted/30',
                       e.dayLabel === 'PAST' && 'bg-red/20 text-red border border-red/40',
                     )}
@@ -290,7 +290,7 @@ export function EdgeTable({ edges, onLog, hideFeeNegative, onToggleHideFeeNegati
                   </button>
                   <div className="label mt-1">{e.kellyPct}% KELLY</div>
                 </td>
-                <td className="text-muted">{e.volume.toLocaleString()}</td>
+                <td className="text-muted">{e.volume > 0 ? e.volume.toLocaleString() : '—'}</td>
                 <td>
                   <button
                     onClick={() => onLog(e)}

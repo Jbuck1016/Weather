@@ -199,6 +199,10 @@ export async function GET(req: Request) {
 
       if (forecastTemp === null) continue
 
+      // Skip degenerate today-markets where Kalshi hasn't priced yet
+      // (1-2 cent asks with actual observed temps produce huge fake edges)
+      if (forecastSource === 'wethr_actual' && rawYesAsk <= 2 && rawNoAsk <= 2) continue
+
       const kalshiProb = ((yesBid + yesAsk) / 2) / 100
       const subtitle = m.subtitle || rangeLabel(info)
       const nwsProb = calcNwsProb(forecastTemp, info, m.title || '', stdDevUsed)

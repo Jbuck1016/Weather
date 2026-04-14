@@ -4,7 +4,10 @@
       "Bash(npx next:*)",
       "Bash(npm install:*)",
       "Bash(npx tsc:*)",
-      "Bash(npx vercel:*)"
+      "Bash(npx vercel:*)",
+      "Bash(curl -s \"https://weather-h6m57fs0o-jbuck1016s-projects.vercel.app/api/edges?bankroll=750\")",
+      "Bash(python -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\('edges:',len\\(d.get\\('edges',[]\\)\\),'tomorrow:',d.get\\('tomorrow'\\),'updatedAt:',d.get\\('updatedAt'\\)\\);print\\('dayLabels:',sorted\\(set\\(e['dayLabel'] for e in d.get\\('edges',[]\\)\\)\\)\\)\")",
+      "Bash(python -c \"import json,sys;d=json.load\\(sys.stdin\\);print\\('edges:',len\\(d.get\\('edges',[]\\)\\),'tomorrow:',d.get\\('tomorrow'\\)\\);print\\('dayLabels:',sorted\\(set\\(e['dayLabel'] for e in d.get\\('edges',[]\\)\\)\\)\\)\")"
     ]
   }
 }
