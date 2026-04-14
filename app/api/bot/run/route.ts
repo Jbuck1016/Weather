@@ -13,7 +13,7 @@ export const maxDuration = 60
 
 async function runCycle(req: Request) {
   const authHeader = req.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET ?? 'dev'
+  const cronSecret = (process.env.CRON_SECRET ?? 'dev').trim()
   if (authHeader !== `Bearer ${cronSecret}` && process.env.NODE_ENV === 'production') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

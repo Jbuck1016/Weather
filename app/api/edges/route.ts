@@ -159,10 +159,11 @@ export async function GET(req: Request) {
         rawNoBid === 0 && rawNoAsk === 0
       ) continue
 
-      const yesBid = rawYesBid > 0 ? rawYesBid : (rawNoAsk > 0 ? 100 - rawNoAsk : 0)
-      const yesAsk = rawYesAsk > 0 ? rawYesAsk : (rawNoBid > 0 ? 100 - rawNoBid : 0)
-      const noBid = rawNoBid > 0 ? rawNoBid : (rawYesAsk > 0 ? 100 - rawYesAsk : 0)
-      const noAsk = rawNoAsk > 0 ? rawNoAsk : (rawYesBid > 0 ? 100 - rawYesBid : 0)
+      const clampPrice = (c: number) => (Number.isFinite(c) && c > 0 && c < 100 ? c : 0)
+      const yesBid = clampPrice(rawYesBid > 0 ? rawYesBid : (rawNoAsk > 0 ? 100 - rawNoAsk : 0))
+      const yesAsk = clampPrice(rawYesAsk > 0 ? rawYesAsk : (rawNoBid > 0 ? 100 - rawNoBid : 0))
+      const noBid = clampPrice(rawNoBid > 0 ? rawNoBid : (rawYesAsk > 0 ? 100 - rawYesAsk : 0))
+      const noAsk = clampPrice(rawNoAsk > 0 ? rawNoAsk : (rawYesBid > 0 ? 100 - rawYesBid : 0))
 
       const isHighMarket = series.startsWith('KXHIGH')
       const marketDateStr = mktDate.toISOString().slice(0, 10)
@@ -324,8 +325,13 @@ export async function GET(req: Request) {
     })
   })
 
-  edges.sort((a, b) => Math.abs(b.edgePct) - Math.abs(a.edgePct))
-  edges.forEach((e, i) => (e.rank = i + 1))
+  const activeEdges = edges.filter((e) => e.dayLabel !== 'PAST')
+  activeEdges.sort((a, b) => Math.abs(b.edgePct) - Math.abs(a.edgePct))
+  activeEdges.forEach((e, i) => (e.rank = i + 1))
+
+  for (const cs of cityStatus) {
+    cs.count = activeEdges.filter((e) => e.series === cs.series).length
+  }
 
   const nwsTempsByShort: Record<string, number> = {}
   for (const [series, data] of cityDataMap.entries()) {
@@ -334,7 +340,7 @@ export async function GET(req: Request) {
   }
 
   const response: EdgesResponse = {
-    edges,
+    edges: activeEdges,
     nwsTemps: nwsTempsByShort,
     cityStatus,
     bankroll,

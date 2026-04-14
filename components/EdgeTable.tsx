@@ -16,7 +16,9 @@ interface Props {
 }
 
 function priceCell(cents: number, color: 'green' | 'red') {
-  if (cents <= 0 || cents >= 100) return <span className="text-muted">—</span>
+  if (!Number.isFinite(cents) || cents <= 0 || cents >= 100) {
+    return <span className="text-muted">—</span>
+  }
   return (
     <span className={color === 'green' ? 'text-green font-bold' : 'text-red font-bold'}>
       {americanOdds(cents)}
@@ -174,29 +176,30 @@ export function EdgeTable({ edges, onLog, hideFeeNegative, onToggleHideFeeNegati
                 <td>
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-text">{e.forecastTemp.toFixed(0)}°</span>
-                    <span
-                      className={clsx(
-                        'px-1.5 py-0.5 text-[9px] font-bold tracking-wider rounded-sm',
-                        e.forecastSource === 'wethr_actual' && 'bg-green text-bg',
-                        e.forecastSource === 'model_consensus' && 'bg-accent text-bg',
-                        e.forecastSource === 'wethr_nws_forecast' && 'bg-accent/20 text-accent border border-accent/40',
-                        e.forecastSource === 'nws_fallback' && 'bg-yellow/20 text-yellow border border-yellow/40',
-                      )}
-                      title={
-                        e.forecastSource === 'wethr_actual'
-                          ? 'Wethr running high (NWS logic — OMO + CLI + DSM + 6hr)'
-                          : e.forecastSource === 'model_consensus'
-                            ? `Accuracy-weighted consensus of ${e.modelCount} models (${e.weightedBy === 'accuracy' ? 'accuracy-weighted' : 'equal weights — collecting data'})`
-                            : e.forecastSource === 'wethr_nws_forecast'
-                              ? `NWS forecast via Wethr${e.forecastVersion !== null ? ` (v${e.forecastVersion})` : ''}${e.forecastUpdatedAt ? ` · ${new Date(e.forecastUpdatedAt).toLocaleTimeString()}` : ''}`
-                              : 'Direct NWS fallback (Wethr unavailable)'
-                      }
-                    >
-                      {e.forecastSource === 'wethr_actual' ? 'ACTUAL'
-                        : e.forecastSource === 'model_consensus' ? 'CONS'
-                        : e.forecastSource === 'nws_fallback' ? 'FBK'
-                        : 'FCST'}
-                    </span>
+                    {e.forecastSource === 'wethr_actual' && (
+                      <span
+                        className="px-1.5 py-0.5 text-[9px] font-bold tracking-wider rounded-sm bg-green text-bg"
+                        title="Wethr running high (NWS logic — OMO + CLI + DSM + 6hr)"
+                      >
+                        OBS
+                      </span>
+                    )}
+                    {e.forecastSource === 'model_consensus' && (
+                      <span
+                        className="px-1.5 py-0.5 text-[9px] font-bold tracking-wider rounded-sm bg-muted/20 text-muted border border-muted/40"
+                        title={`Accuracy-weighted consensus of ${e.modelCount} models (${e.weightedBy === 'accuracy' ? 'accuracy-weighted' : 'equal weights — collecting data'})`}
+                      >
+                        MODEL
+                      </span>
+                    )}
+                    {e.forecastSource === 'nws_fallback' && (
+                      <span
+                        className="px-1.5 py-0.5 text-[9px] font-bold tracking-wider rounded-sm bg-yellow/20 text-yellow border border-yellow/40"
+                        title="Direct NWS fallback (Wethr unavailable)"
+                      >
+                        FBK
+                      </span>
+                    )}
                   </div>
                 </td>
                 <td>
