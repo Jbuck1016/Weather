@@ -43,6 +43,39 @@ async function runCycle(req: Request) {
     const edges = edgesData.edges ?? []
 
     const freshOpen: BotTrade[] = await getOpenPositions()
+
+    // Snapshot open positions — record edge decay over time
+    const snapshotRows = []
+    for (const pos of freshOpen) {
+      const matchingEdge = edges.find((e: any) => e.ticker === pos.market_ticker)
+      if (!matchingEdge) continue
+      const hoursSinceEntry = pos.created_at
+        ? (Date.now() - new Date(pos.created_at).getTime()) / 3600000
+        : null
+      snapshotRows.push({
+        bot_trade_id: pos.id,
+        market_ticker: pos.market_ticker,
+        city: pos.city,
+        hours_since_entry: hoursSinceEntry !== null ? Math.round(hoursSinceEntry * 10) / 10 : null,
+        hours_to_close: matchingEdge.hoursToClose
+          ? Math.round(matchingEdge.hoursToClose * 10) / 10 : null,
+        yes_bid_cents: matchingEdge.yesBid,
+        yes_ask_cents: matchingEdge.yesAsk,
+        kalshi_prob: matchingEdge.kalshiProb,
+        nws_prob: matchingEdge.nwsProb,
+        edge_pct: matchingEdge.edgePct,
+        fee_adjusted_ev_pct: matchingEdge.feeAdjustedEvPct,
+        inter_model_spread: matchingEdge.interModelSpread,
+        forecast_temp: matchingEdge.forecastTemp,
+        volume: matchingEdge.volume ?? 0,
+      })
+    }
+    if (snapshotRows.length > 0) {
+      const { error: snapErr } = await sb.from('position_snapshots').insert(snapshotRows)
+      if (snapErr) console.error('[bot] snapshot insert failed:', snapErr)
+      else console.log(`[bot] snapshotted ${snapshotRows.length} open positions`)
+    }
+
     const entryDecisions: any[] = []
     const newTrades: string[] = []
 
