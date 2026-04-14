@@ -2,12 +2,15 @@ import { NextResponse } from 'next/server'
 import { getBotState, updateBotState, type BotState } from '@/lib/bot'
 
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
 export const runtime = 'nodejs'
+
+const NO_CACHE = { 'Cache-Control': 'no-store, no-cache, must-revalidate' }
 
 export async function GET() {
   const state = await getBotState()
-  if (!state) return NextResponse.json({ error: 'state not found' }, { status: 404 })
-  return NextResponse.json({ state })
+  if (!state) return NextResponse.json({ error: 'state not found' }, { status: 404, headers: NO_CACHE })
+  return NextResponse.json({ state }, { headers: NO_CACHE })
 }
 
 const ALLOWED_KEYS: (keyof BotState)[] = [
@@ -35,5 +38,5 @@ export async function PATCH(req: Request) {
   // Never let the API turn off paper_only
   await updateBotState(updates)
   const state = await getBotState()
-  return NextResponse.json({ state })
+  return NextResponse.json({ state }, { headers: NO_CACHE })
 }
