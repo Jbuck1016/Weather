@@ -56,6 +56,7 @@ export interface BotDecision {
   position_limit_ok: boolean
   city_limit_ok: boolean
   time_to_close_ok: boolean
+  temp_buffer_ok: boolean
   bot_trade_id?: string
 }
 
@@ -132,9 +133,34 @@ export function evaluateEntry(
   const city_limit_ok = cityPositions.length < state.max_positions_per_city
   const time_to_close_ok = (edge.hoursToClose ?? 24) >= state.min_hours_to_close
 
+  let temp_buffer_ok = true
+  let tempBufferFailure: string | null = null
+  if (edge.strikeType !== 'between' && edge.modelConsensus !== null && edge.stdDevUsed > 0) {
+    const requiredBuffer = edge.stdDevUsed
+    const isGreater = edge.strikeType === 'greater'
+    const strike = isGreater ? (edge.floorStrike ?? edge.capStrike) : (edge.capStrike ?? edge.floorStrike)
+
+    if (strike !== null) {
+      if (edge.direction === 'BUY YES' && isGreater) {
+        temp_buffer_ok = edge.modelConsensus >= strike + requiredBuffer
+      } else if (edge.direction === 'BUY NO' && isGreater) {
+        temp_buffer_ok = edge.modelConsensus <= strike - requiredBuffer
+      } else if (edge.direction === 'BUY YES' && !isGreater) {
+        temp_buffer_ok = edge.modelConsensus <= strike - requiredBuffer
+      } else if (edge.direction === 'BUY NO' && !isGreater) {
+        temp_buffer_ok = edge.modelConsensus >= strike + requiredBuffer
+      }
+
+      if (!temp_buffer_ok) {
+        tempBufferFailure = `Temp buffer insufficient — model ${edge.modelConsensus}°F is not ${requiredBuffer.toFixed(1)}°F past strike ${strike}°F for ${edge.direction}`
+      }
+    }
+  }
+
   const allPass =
     fee_ev_ok && spread_ok && volume_ok && signal_strength_ok &&
-    daily_limit_ok && position_limit_ok && city_limit_ok && time_to_close_ok
+    daily_limit_ok && position_limit_ok && city_limit_ok && time_to_close_ok &&
+    temp_buffer_ok
 
   const failures: string[] = []
   if (!fee_ev_ok) failures.push(`Fee EV ${edge.feeAdjustedEvPct?.toFixed(1)}% < ${state.min_fee_ev_pct}% threshold`)
@@ -145,6 +171,7 @@ export function evaluateEntry(
   if (!position_limit_ok) failures.push(`${openPositions.length} open positions at max ${state.max_open_positions}`)
   if (!city_limit_ok) failures.push(`${cityPositions.length} ${edge.city} positions at city max ${state.max_positions_per_city}`)
   if (!time_to_close_ok) failures.push(`Only ${edge.hoursToClose?.toFixed(1)}h to close, need ${state.min_hours_to_close}h`)
+  if (tempBufferFailure) failures.push(tempBufferFailure)
 
   const reason = allPass
     ? `All filters passed — ${edge.direction} at ${edge.edgePct?.toFixed(1)}% edge, Fee EV ${edge.feeAdjustedEvPct?.toFixed(1)}%`
@@ -172,6 +199,7 @@ export function evaluateEntry(
     position_limit_ok,
     city_limit_ok,
     time_to_close_ok,
+    temp_buffer_ok,
   }
 }
 
@@ -248,15 +276,25 @@ export async function checkExits(
     let action: BotAction = 'HOLD'
     let reason = `Holding — current ${currentPriceCents.toFixed(0)}¢ (${priceRatio.toFixed(2)}x entry)`
 
+    const priceDropPct = pos.entry_price_cents > 0
+      ? (pos.entry_price_cents - currentPriceCents) / pos.entry_price_cents
+      : 0
+
     if (needsSettlement) {
       action = 'NEEDS_SETTLEMENT'
       reason = `Market settled on ${pos.market_date} — awaiting NWS actual temp`
     } else if (priceRatio >= state.profit_take_multiple) {
       action = 'PROFIT_TAKE'
       reason = `Profit take — price ${currentPriceCents.toFixed(0)}¢ is ${priceRatio.toFixed(2)}x entry (${state.profit_take_multiple}x target)`
-    } else if (priceRatio <= 1 - state.stop_loss_pct) {
+    } else if (priceDropPct >= state.stop_loss_pct && hoursToClose <= 3) {
       action = 'STOP_LOSS'
-      reason = `Stop loss — price ${currentPriceCents.toFixed(0)}¢ dropped ${((1 - priceRatio) * 100).toFixed(0)}% from entry`
+      reason = `Stop loss — price ${currentPriceCents.toFixed(0)}¢ dropped ${(priceDropPct * 100).toFixed(0)}% from entry (${hoursToClose.toFixed(1)}h to close)`
+    } else if (priceDropPct >= state.stop_loss_pct && hoursToClose > 3) {
+      console.log(
+        `[bot] suppressing early stop loss on ${pos.market_ticker} — ` +
+        `${hoursToClose.toFixed(1)}h left, price dropped ${(priceDropPct * 100).toFixed(0)}% — holding`,
+      )
+      reason = `HOLD: Price dropped ${(priceDropPct * 100).toFixed(0)}% but ${hoursToClose.toFixed(1)}h to close — holding through intraday noise`
     } else if (hoursToClose < state.min_hours_to_close) {
       action = 'TIME_STOP'
       reason = `Time stop — ${hoursToClose.toFixed(1)}h to market close`
@@ -277,7 +315,7 @@ export async function checkExits(
       const stillOpen = isProfitTake && remainingContracts > 0
 
       const finalNetPnl = ((pos as any).net_pnl ?? 0) + netPnl
-      await sb
+      const { error: updateErr } = await sb
         .from('bot_trades')
         .update({
           status: stillOpen ? 'open' : 'closed',
@@ -287,31 +325,37 @@ export async function checkExits(
           exit_proceeds: Math.round(proceeds * 100) / 100,
           closed_at: stillOpen ? null : new Date().toISOString(),
           contracts: stillOpen ? remainingContracts : pos.contracts,
-          net_pnl: finalNetPnl,
-          gross_pnl: proceeds - pos.cost,
+          net_pnl: Math.round(finalNetPnl * 100) / 100,
+          gross_pnl: Math.round((proceeds - pos.cost) * 100) / 100,
           settlement_result: stillOpen ? null : (finalNetPnl >= 0 ? 'WIN' : 'LOSS'),
-          trading_fee: ((pos as any).trading_fee ?? 0) + tradingFee,
-          settlement_fee: ((pos as any).settlement_fee ?? 0) + settlementFee,
+          trading_fee: Math.round((((pos as any).trading_fee ?? 0) + tradingFee) * 100) / 100,
+          settlement_fee: Math.round((((pos as any).settlement_fee ?? 0) + settlementFee) * 100) / 100,
         })
         .eq('id', pos.id)
 
-      const newBankroll = state.paper_bankroll + netProceeds
-      await updateBotState({
-        paper_bankroll: newBankroll,
-        peak_bankroll: Math.max(state.peak_bankroll ?? newBankroll, newBankroll),
-      })
-      state.paper_bankroll = newBankroll
+      if (updateErr) {
+        console.error('[bot] CRITICAL — trade update failed for', pos.market_ticker, JSON.stringify(updateErr))
+      } else {
+        console.log('[bot] trade closed:', pos.market_ticker, action.toLowerCase(), 'net_pnl:', netPnl.toFixed(2), 'stillOpen:', stillOpen)
 
-      if (!stillOpen) {
-        const settledTrade = {
-          ...pos,
-          status: 'closed' as const,
-          net_pnl: finalNetPnl,
-          gross_pnl: proceeds - pos.cost,
-          settlement_result: finalNetPnl >= 0 ? 'WIN' : 'LOSS',
-          closed_at: new Date().toISOString(),
+        const newBankroll = state.paper_bankroll + netProceeds
+        await updateBotState({
+          paper_bankroll: Math.round(newBankroll * 100) / 100,
+          peak_bankroll: Math.max(state.peak_bankroll ?? newBankroll, newBankroll),
+        })
+        state.paper_bankroll = newBankroll
+
+        if (!stillOpen) {
+          const settledTrade = {
+            ...pos,
+            status: 'closed' as const,
+            net_pnl: finalNetPnl,
+            gross_pnl: proceeds - pos.cost,
+            settlement_result: finalNetPnl >= 0 ? 'WIN' : 'LOSS',
+            closed_at: new Date().toISOString(),
+          }
+          void writeTradeAnalysis(settledTrade as any, null)
         }
-        void writeTradeAnalysis(settledTrade as any, null)
       }
     }
 
@@ -337,6 +381,7 @@ export async function checkExits(
       position_limit_ok: true,
       city_limit_ok: true,
       time_to_close_ok: true,
+      temp_buffer_ok: true,
       bot_trade_id: pos.id,
     })
   }

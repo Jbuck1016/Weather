@@ -74,6 +74,7 @@ interface BotDecision {
   reason: string
   fee_ev_ok: boolean
   spread_ok: boolean
+  temp_buffer_ok: boolean
   volume_ok: boolean
   signal_strength_ok: boolean
   daily_limit_ok: boolean
@@ -605,6 +606,7 @@ function DecisionsTable({
                     <div className="flex gap-1 text-[10px] font-mono">
                       <GateDot ok={d.fee_ev_ok} title="Fee EV" />
                       <GateDot ok={d.spread_ok} title="Spread" />
+                      <GateDot ok={d.temp_buffer_ok ?? true} title="Temp Buffer" />
                       <GateDot ok={d.volume_ok} title="Volume" />
                       <GateDot ok={d.signal_strength_ok} title="Signal" />
                       <GateDot ok={d.daily_limit_ok} title="Daily" />
@@ -629,6 +631,7 @@ function DecisionsTable({
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1 p-2">
                         <Check ok={d.fee_ev_ok}>Fee EV</Check>
                         <Check ok={d.spread_ok}>Spread</Check>
+                        <Check ok={d.temp_buffer_ok ?? true}>Temp Buffer</Check>
                         <Check ok={d.volume_ok}>Volume</Check>
                         <Check ok={d.signal_strength_ok}>Signal Strength</Check>
                         <Check ok={d.daily_limit_ok}>Daily Limit</Check>

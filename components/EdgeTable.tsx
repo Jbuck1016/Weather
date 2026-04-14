@@ -6,7 +6,27 @@ import type { EdgeResult } from '@/lib/types'
 import { EdgeBadge } from './EdgeBadge'
 import { americanOdds } from '@/lib/edge'
 
-type SortKey = 'rank' | 'city' | 'edge' | 'feeEv' | 'kalshi' | 'nws' | 'volume'
+type SortKey = 'rank' | 'city' | 'edge' | 'feeEv' | 'kalshi' | 'nws' | 'volume' | 'buffer'
+
+function computeBuffer(e: EdgeResult): number | null {
+  if (e.modelConsensus === null) return null
+  if (e.strikeType === 'between') return null
+  if (e.strikeType === 'greater') {
+    const strike = e.floorStrike ?? e.capStrike
+    if (strike === null) return null
+    return e.direction === 'BUY YES'
+      ? e.modelConsensus - strike
+      : strike - e.modelConsensus
+  }
+  if (e.strikeType === 'less') {
+    const strike = e.capStrike ?? e.floorStrike
+    if (strike === null) return null
+    return e.direction === 'BUY YES'
+      ? strike - e.modelConsensus
+      : e.modelConsensus - strike
+  }
+  return null
+}
 
 interface Props {
   edges: EdgeResult[]
@@ -69,6 +89,10 @@ export function EdgeTable({ edges, onLog, hideFeeNegative, onToggleHideFeeNegati
         case 'kalshi': av = a.kalshiProb; bv = b.kalshiProb; break
         case 'nws': av = a.nwsTemp; bv = b.nwsTemp; break
         case 'volume': av = a.volume; bv = b.volume; break
+        case 'buffer': {
+          const ab = computeBuffer(a); const bb = computeBuffer(b)
+          av = ab ?? -999; bv = bb ?? -999; break
+        }
       }
       if (av < bv) return sortDir === 'asc' ? -1 : 1
       if (av > bv) return sortDir === 'asc' ? 1 : -1
@@ -124,6 +148,12 @@ export function EdgeTable({ edges, onLog, hideFeeNegative, onToggleHideFeeNegati
             <th onClick={() => toggle('nws')}>Forecast °F</th>
             <th>Consensus</th>
             <th>Model %</th>
+            <th
+              onClick={() => toggle('buffer')}
+              title="How many degrees the model forecast is past the strike in your favor. Negative = model predicts a loss. Green = strong conviction, Yellow = marginal, Red = betting against forecast."
+            >
+              Buffer
+            </th>
             <th onClick={() => toggle('feeEv')}>Edge / Fee EV</th>
             <th>Signal</th>
             <th>Action</th>
@@ -237,6 +267,22 @@ export function EdgeTable({ edges, onLog, hideFeeNegative, onToggleHideFeeNegati
                         : 'Probability based on NWS forecast'
                     }
                   >σ{e.stdDevUsed.toFixed(1)}</span>
+                </td>
+                <td>
+                  {(() => {
+                    const buf = computeBuffer(e)
+                    if (buf === null) return <span className="text-muted">—</span>
+                    const tone =
+                      buf < 0 ? 'text-red'
+                      : buf >= e.stdDevUsed ? 'text-green'
+                      : 'text-yellow'
+                    const sign = buf >= 0 ? '+' : ''
+                    return (
+                      <span className={clsx('font-bold', tone)} title="Model forecast vs strike in bet direction">
+                        {sign}{buf.toFixed(1)}°
+                      </span>
+                    )
+                  })()}
                 </td>
                 <td>
                   <div
