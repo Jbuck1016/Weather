@@ -26,6 +26,7 @@ interface BotState {
   profit_take_multiple: number
   stop_loss_pct: number
   min_hours_to_close: number
+  min_kalshi_prob_to_hold: number
   daily_spend_today: number
   daily_reset_date: string
   total_trades: number
@@ -93,7 +94,13 @@ interface EquitySnapshot {
   total_pnl: number
 }
 
-const PARAM_FIELDS: { key: keyof BotState; label: string; step?: number; suffix?: string }[] = [
+const PARAM_FIELDS: {
+  key: keyof BotState
+  label: string
+  step?: number
+  suffix?: string
+  display?: 'percent'
+}[] = [
   { key: 'min_fee_ev_pct', label: 'Min Fee EV %', step: 0.5, suffix: '%' },
   { key: 'max_inter_model_spread', label: 'Max Spread', step: 0.5, suffix: '°F' },
   { key: 'min_edge_pct', label: 'Min Edge %', step: 0.5, suffix: '%' },
@@ -106,6 +113,13 @@ const PARAM_FIELDS: { key: keyof BotState; label: string; step?: number; suffix?
   { key: 'profit_take_multiple', label: 'Profit Take', step: 0.25, suffix: 'x' },
   { key: 'stop_loss_pct', label: 'Stop Loss', step: 0.05 },
   { key: 'min_hours_to_close', label: 'Min Hours', step: 0.5, suffix: 'h' },
+  {
+    key: 'min_kalshi_prob_to_hold',
+    label: 'Min Hold Prob %',
+    step: 0.5,
+    suffix: '%',
+    display: 'percent',
+  },
 ]
 
 export default function BotPage() {
@@ -345,18 +359,20 @@ export default function BotPage() {
             </div>
             <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto scrollbar-thin pr-1">
               {PARAM_FIELDS.map((f) => {
-                const current = (editing[f.key] ?? state[f.key]) as number
+                const raw = (editing[f.key] ?? state[f.key]) as number
+                const displayed = f.display === 'percent' ? raw * 100 : raw
                 return (
                   <label key={f.key} className="text-[10px] text-muted">
                     {f.label}
                     <input
                       type="number"
                       step={f.step}
-                      value={current}
+                      value={displayed}
                       onChange={(e) => {
                         const v = parseFloat(e.target.value)
                         if (!Number.isFinite(v)) return
-                        setEditing((p) => ({ ...p, [f.key]: v }))
+                        const stored = f.display === 'percent' ? v / 100 : v
+                        setEditing((p) => ({ ...p, [f.key]: stored }))
                       }}
                       className="w-full text-xs mt-0.5"
                     />

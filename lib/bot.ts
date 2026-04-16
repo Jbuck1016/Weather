@@ -20,9 +20,12 @@ export interface BotState {
   profit_take_multiple: number
   stop_loss_pct: number
   min_hours_to_close: number
+  min_kalshi_prob_to_hold: number
   daily_spend_today: number
   daily_reset_date: string
   total_trades: number
+  total_wins: number
+  total_losses: number
   last_run_at: string | null
   last_cycle_id: string | null
   last_run_status: string | null
@@ -135,12 +138,17 @@ export function evaluateEntry(
 
   let temp_buffer_ok = true
   let tempBufferFailure: string | null = null
-  if (edge.strikeType !== 'between' && edge.modelConsensus !== null && edge.stdDevUsed > 0) {
+  const isThresholdMarket = edge.strikeType === 'greater' || edge.strikeType === 'less'
+  if (isThresholdMarket && edge.modelConsensus !== null && edge.stdDevUsed > 0) {
     const requiredBuffer = edge.stdDevUsed
     const isGreater = edge.strikeType === 'greater'
     const strike = isGreater ? (edge.floorStrike ?? edge.capStrike) : (edge.capStrike ?? edge.floorStrike)
 
-    if (strike !== null) {
+    if (strike === null) {
+      // Threshold market without a resolvable strike — refuse rather than silently pass.
+      temp_buffer_ok = false
+      tempBufferFailure = `Temp buffer: no strike on ${edge.strikeType} market ${edge.ticker}`
+    } else {
       if (edge.direction === 'BUY YES' && isGreater) {
         temp_buffer_ok = edge.modelConsensus >= strike + requiredBuffer
       } else if (edge.direction === 'BUY NO' && isGreater) {
@@ -155,6 +163,14 @@ export function evaluateEntry(
         tempBufferFailure = `Temp buffer insufficient — model ${edge.modelConsensus}°F is not ${requiredBuffer.toFixed(1)}°F past strike ${strike}°F for ${edge.direction}`
       }
     }
+
+    console.log(
+      `[bot] buffer check: ${edge.ticker} dir=${edge.direction} strikeType=${edge.strikeType} strike=${strike} model=${edge.modelConsensus} stdDev=${edge.stdDevUsed} bufferOk=${temp_buffer_ok}`,
+    )
+  } else {
+    console.log(
+      `[bot] buffer check skipped: ${edge.ticker} dir=${edge.direction} strikeType=${edge.strikeType} model=${edge.modelConsensus} stdDev=${edge.stdDevUsed} (non-threshold or missing inputs)`,
+    )
   }
 
   const allPass =
@@ -209,6 +225,8 @@ export interface SizingResult {
   entryPriceCents: number
 }
 
+export const MAX_CONTRACTS_PER_TRADE = 500
+
 export function sizePaperTrade(edge: EdgeResult, state: BotState): SizingResult {
   const kellyDollars = (edge.kellyPct / 100) * state.paper_bankroll * state.kelly_fraction
   const cappedDollars = Math.min(kellyDollars, state.max_trade_dollars)
@@ -225,7 +243,10 @@ export function sizePaperTrade(edge: EdgeResult, state: BotState): SizingResult 
   }
 
   const costPerContract = entryPriceCents / 100
-  const contracts = Math.floor(tradeDollars / costPerContract)
+  const contracts = Math.min(
+    Math.floor(tradeDollars / costPerContract),
+    MAX_CONTRACTS_PER_TRADE,
+  )
   const cost = Math.round(contracts * costPerContract * 100) / 100
   return { contracts, cost, entryPriceCents }
 }
@@ -279,6 +300,92 @@ export async function checkExits(
     const priceDropPct = pos.entry_price_cents > 0
       ? (pos.entry_price_cents - currentPriceCents) / pos.entry_price_cents
       : 0
+
+    // Auto-abandon: if Kalshi implied probability drops below min_kalshi_prob_to_hold,
+    // treat as settled loss so the slot frees up rather than holding a dead trade.
+    const currentKalshiProb = currentPriceCents / 100
+    const minProb = state.min_kalshi_prob_to_hold ?? 0.02
+    const impliedProb = pos.side === 'YES' ? currentKalshiProb : 1 - currentKalshiProb
+    if (impliedProb <= minProb && !needsSettlement) {
+      console.log(
+        `[bot] abandoning dead position ${pos.market_ticker} — implied prob ${(impliedProb * 100).toFixed(1)}% at/below ${(minProb * 100).toFixed(1)}% threshold`,
+      )
+
+      const grossPnl =
+        pos.side === 'YES'
+          ? ((currentPriceCents - pos.entry_price_cents) / 100) * pos.contracts
+          : ((pos.entry_price_cents - currentPriceCents) / 100) * pos.contracts
+      const tradingFee = Math.abs(grossPnl) * 0.01
+      const netPnl = grossPnl - tradingFee
+      const newBankroll = state.paper_bankroll + netPnl
+
+      const { error: abandonErr } = await sb
+        .from('bot_trades')
+        .update({
+          exit_price_cents: currentPriceCents,
+          exit_reason: 'abandon',
+          exit_contracts: pos.contracts,
+          exit_cost: (currentPriceCents / 100) * pos.contracts,
+          closed_at: new Date().toISOString(),
+          settlement_result: 'LOSS',
+          gross_pnl: Math.round(grossPnl * 100) / 100,
+          trading_fee: Math.round(tradingFee * 100) / 100,
+          settlement_fee: 0,
+          net_pnl: Math.round(netPnl * 100) / 100,
+          paper_bankroll_after: Math.round(newBankroll * 100) / 100,
+          status: 'settled',
+        })
+        .eq('id', pos.id)
+
+      if (abandonErr) {
+        console.error('[bot] abandon write failed for', pos.market_ticker, JSON.stringify(abandonErr))
+      } else {
+        await updateBotState({
+          paper_bankroll: Math.round(newBankroll * 100) / 100,
+          total_losses: (state.total_losses ?? 0) + 1,
+        })
+        state.paper_bankroll = newBankroll
+        state.total_losses = (state.total_losses ?? 0) + 1
+        void writeTradeAnalysis(
+          {
+            ...pos,
+            status: 'settled',
+            net_pnl: netPnl,
+            gross_pnl: grossPnl,
+            settlement_result: 'LOSS',
+            closed_at: new Date().toISOString(),
+          } as any,
+          null,
+        )
+      }
+
+      decisions.push({
+        market_ticker: pos.market_ticker,
+        city: pos.city,
+        market_date: pos.market_date,
+        subtitle: pos.subtitle ?? '',
+        edge_pct: pos.edge_pct_at_entry,
+        fee_ev_pct: pos.fee_ev_at_entry,
+        kalshi_prob: pos.kalshi_prob_at_entry,
+        model_prob: pos.model_prob_at_entry,
+        inter_model_spread: pos.inter_model_spread,
+        signal_label: '',
+        direction: pos.side === 'YES' ? 'BUY YES' : 'BUY NO',
+        action: 'SELL',
+        reason: `ABANDON: implied prob ${(impliedProb * 100).toFixed(1)}% ≤ ${(minProb * 100).toFixed(1)}% floor — booking loss and freeing slot`,
+        fee_ev_ok: true,
+        spread_ok: true,
+        volume_ok: true,
+        signal_strength_ok: true,
+        daily_limit_ok: true,
+        position_limit_ok: true,
+        city_limit_ok: true,
+        time_to_close_ok: true,
+        temp_buffer_ok: true,
+        bot_trade_id: pos.id,
+      })
+      continue
+    }
 
     if (needsSettlement) {
       action = 'NEEDS_SETTLEMENT'

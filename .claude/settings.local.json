@@ -17,7 +17,11 @@
       "mcp__claude_ai_Supabase__apply_migration",
       "mcp__claude_ai_Supabase__execute_sql",
       "Bash(./node_modules/.bin/tsc --noEmit)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "mcp__9792fb5f-b6de-4516-9134-94d149aa6bc5__list_projects",
+      "mcp__9792fb5f-b6de-4516-9134-94d149aa6bc5__execute_sql",
+      "mcp__9792fb5f-b6de-4516-9134-94d149aa6bc5__apply_migration",
+      "Bash(git commit -m ':*)"
     ]
   }
 }

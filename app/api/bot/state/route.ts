@@ -27,6 +27,7 @@ const ALLOWED_KEYS: (keyof BotState)[] = [
   'profit_take_multiple',
   'stop_loss_pct',
   'min_hours_to_close',
+  'min_kalshi_prob_to_hold',
 ]
 
 export async function PATCH(req: Request) {
